@@ -1,182 +1,167 @@
-// Initialize Scaledrone
-const drone = new ScaleDrone('yiS12Ts5RdNhebyM');
-
-// This is the room name based on the secret code
-let roomHash = window.location.hash.substring(1) || Math.floor(Math.random() * 0xFFFFFF).toString(16);
-
-// Room name needs to be prefixed with 'observable-'
-const roomName = 'observable-' + roomHash;
-
-const configuration = {
-  iceServers: [{
-    urls: 'stun:stun.l.google.com:19302'
-  }]
-};
-
+let drone;
 let room;
 let pc;
+const configuration = {
+  iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+};
+let roomHash = '';  // Will store the code generated for the room
+let localStream;
 let isMuted = false;
 
-// Elements
-const startCallBtn = document.getElementById('startCallBtn');
-const endCallBtn = document.getElementById('endCallBtn');
-const muteBtn = document.getElementById('muteBtn');
-const shareBtn = document.getElementById('shareBtn');
-const secretCodeField = document.getElementById('secretCodeField');
-const joinButton = document.getElementById('joinButton');
+function onSuccess() {}
+function onError(error) {
+  console.error(error);
+}
 
-// Handlers for buttons
-startCallBtn.addEventListener('click', startCall);
-endCallBtn.addEventListener('click', endCall);
-muteBtn.addEventListener('click', mute);
-shareBtn.addEventListener('click', shareLink);
-joinButton.addEventListener('click', joinCall);
+// Generate a random code for the room
+function generateCode() {
+  return Math.floor(Math.random() * 0xFFFFFF).toString(16);
+}
 
-// Start the call and request media permissions
+// Start the call and generate a unique secret code
 function startCall() {
-  startCallBtn.disabled = true;
-  endCallBtn.disabled = false;
+  roomHash = generateCode();
+  document.querySelector('.status-message').innerText = `Share your URL and secret code with someone to start the video call. Your code: ${roomHash}`;
+  document.getElementById('startCallBtn').disabled = true;
+  document.getElementById('joinBtn').disabled = false;
+  document.getElementById('endCallBtn').disabled = false;
+  document.getElementById('muteBtn').disabled = false;
+  document.getElementById('shareBtn').disabled = false;
 
-  navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-    .then(stream => {
-      localVideo.srcObject = stream;
-
-      stream.getTracks().forEach(track => {
-        pc.addTrack(track, stream);
-      });
-
-      room = drone.subscribe(roomName);
-      room.on('open', (error) => {
-        if (error) return console.error(error);
-      });
-
-      room.on('members', (members) => {
-        const isOfferer = members.length === 2;
-        startWebRTC(isOfferer);
-      });
-
-      room.on('data', handleSignalingData);
-    })
-    .catch(err => console.log('Error: ', err));
+  drone = new ScaleDrone('yiS12Ts5RdNhebyM');  // Replace with your ScaleDrone channel ID
+  const roomName = 'observable-' + roomHash;
+  
+  drone.on('open', error => {
+    if (error) return console.error(error);
+    room = drone.subscribe(roomName);
+    room.on('open', error => {
+      if (error) return onError(error);
+    });
+    room.on('members', members => {
+      console.log('Members:', members);
+      const isOfferer = members.length === 2;
+      startWebRTC(isOfferer);
+    });
+  });
 }
 
-// End the call and stop media
-// End the call and stop media
-function endCall() {
-  if (pc) { // Check if the peer connection exists
-    pc.close();
-    pc = null; // Reset pc to prevent further use
-
-    // Stop all media tracks
-    const localStream = localVideo.srcObject;
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
-    }
-    const remoteStream = remoteVideo.srcObject;
-    if (remoteStream) {
-      remoteStream.getTracks().forEach(track => track.stop());
-    }
-  }
-
-  // Disable the buttons after ending the call
-  startCallBtn.disabled = false;
-  endCallBtn.disabled = true;
-
-  // Reset video elements
-  localVideo.srcObject = null;
-  remoteVideo.srcObject = null;
-}
-
-// Mute/Unmute the microphone
-function mute() {
-  const stream = localVideo.srcObject;
-  const audioTrack = stream.getAudioTracks()[0];
-  audioTrack.enabled = !audioTrack.enabled;
-
-  isMuted = !isMuted;
-  muteBtn.textContent = isMuted ? "Unmute" : "Mute";
-}
-
-// Share the link with the secret code
-function shareLink() {
-  const url = `${window.location.origin}${window.location.pathname}#${roomHash}`;
-  prompt("Share this link with others:", url);
-}
-
-// Join the call with the secret code
+// Join the call using the secret code entered by the user
 function joinCall() {
-  const code = secretCodeField.value;
-  if (code) {
-    window.location.hash = code;
-    roomHash = code;
-    startCall();
-  } else {
-    alert('Please enter a valid secret code!');
+  const codeInput = document.getElementById('codeInput').value;
+  if (!codeInput) {
+    alert('Please enter a valid code!');
+    return;
   }
+  roomHash = codeInput;
+  const roomName = 'observable-' + roomHash;
+
+  drone = new ScaleDrone('yiS12Ts5RdNhebyM');  // Replace with your ScaleDrone channel ID
+  drone.on('open', error => {
+    if (error) return console.error(error);
+    room = drone.subscribe(roomName);
+    room.on('open', error => {
+      if (error) return onError(error);
+    });
+    room.on('members', members => {
+      console.log('Members:', members);
+      const isOfferer = members.length === 2;
+      startWebRTC(isOfferer);
+    });
+  });
 }
 
-// Start WebRTC Connection
 function startWebRTC(isOfferer) {
   pc = new RTCPeerConnection(configuration);
 
-  pc.onicecandidate = (event) => {
+  pc.onicecandidate = event => {
     if (event.candidate) {
       sendMessage({ 'candidate': event.candidate });
     }
   };
 
-  pc.ontrack = (event) => {
-    const stream = event.streams[0];
-    remoteVideo.srcObject = stream;
-  };
-
   if (isOfferer) {
     pc.onnegotiationneeded = () => {
-      pc.createOffer()
-        .then(localDescCreated)
-        .catch(handleError);
+      pc.createOffer().then(localDescCreated).catch(onError);
     };
   }
 
-  // Handle media stream from the user
-  navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-    .then(stream => {
-      localVideo.srcObject = stream;
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
-    })
-    .catch(handleError);
+  pc.ontrack = event => {
+    const stream = event.streams[0];
+    if (!remoteVideo.srcObject || remoteVideo.srcObject.id !== stream.id) {
+      remoteVideo.srcObject = stream;
+    }
+  };
+
+  navigator.mediaDevices.getUserMedia({
+    audio: true,
+    video: true,
+  }).then(stream => {
+    localVideo.srcObject = stream;
+    localStream = stream;  // Save the local stream for muting/unmuting
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+  }, onError);
+
+  room.on('data', (message, client) => {
+    if (client.id === drone.clientId) return;
+
+    if (message.sdp) {
+      pc.setRemoteDescription(new RTCSessionDescription(message.sdp), () => {
+        if (pc.remoteDescription.type === 'offer') {
+          pc.createAnswer().then(localDescCreated).catch(onError);
+        }
+      }, onError);
+    } else if (message.candidate) {
+      pc.addIceCandidate(
+        new RTCIceCandidate(message.candidate), onSuccess, onError
+      );
+    }
+  });
 }
 
-// Send signaling message
+function localDescCreated(desc) {
+  pc.setLocalDescription(
+    desc,
+    () => sendMessage({ 'sdp': pc.localDescription }),
+    onError
+  );
+}
+
 function sendMessage(message) {
   drone.publish({
-    room: roomName,
+    room: 'observable-' + roomHash,
     message
   });
 }
 
-// Handle incoming signaling data
-function handleSignalingData(message, client) {
-  if (client.id === drone.clientId) return;
+// End the call
+function endCall() {
+  if (pc) {
+    pc.close();
+    pc = null;
+  }
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    localStream = null;
+  }
+  document.getElementById('startCallBtn').disabled = false;
+  document.getElementById('joinBtn').disabled = true;
+  document.getElementById('codeInput').value = '';
+  document.querySelector('.status-message').innerText = 'Send your URL to a friend to start a video call';
+}
 
-  if (message.sdp) {
-    pc.setRemoteDescription(new RTCSessionDescription(message.sdp), () => {
-      if (pc.remoteDescription.type === 'offer') {
-        pc.createAnswer().then(localDescCreated).catch(handleError);
-      }
-    }, handleError);
-  } else if (message.candidate) {
-    pc.addIceCandidate(new RTCIceCandidate(message.candidate), () => {}, handleError);
+// Mute or Unmute the microphone
+function muteUnmute() {
+  const track = localStream.getTracks().find(track => track.kind === 'audio');
+  if (track) {
+    isMuted = !isMuted;
+    track.enabled = !isMuted;
+    document.getElementById('muteBtn').innerText = isMuted ? 'Unmute' : 'Mute';
   }
 }
 
-function localDescCreated(desc) {
-  pc.setLocalDescription(desc, () => {
-    sendMessage({ 'sdp': pc.localDescription });
-  }, handleError);
-}
-
-function handleError(error) {
-  console.log('Error: ', error);
+// Share the URL with others
+function shareURL() {
+  const url = window.location.href + '#' + roomHash;
+  prompt('Share this URL with others to join the call:', url);
 }
 
